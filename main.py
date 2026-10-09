@@ -26,16 +26,7 @@ coords = np.array(all_coords)
 tree = cKDTree(coords)
 
 
-@app.post("/search/")
-async def search(
-    lat: float = Form(...),
-    long: float = Form(...),
-    cat: str = Form(...),
-    rad: float = Form(...),
-    roads: UploadFile = File(...),
-):
-    text = (await roads.read()).decode(errors="ignore")
-
+def parse_roads(text):
     raw = []
     for line in text.splitlines():
         parts = line.split()
@@ -47,24 +38,41 @@ async def search(
             continue
 
     graph = {}
-    if raw:
-        pts1 = np.array([[r[0], r[1]] for r in raw])
-        pts2 = np.array([[r[2], r[3]] for r in raw])
-        _, idx1 = tree.query(pts1)
-        _, idx2 = tree.query(pts2)
+    if not raw:
+        return graph
 
-        seen = set()
-        for a, b in zip(idx1, idx2):
-            a, b = int(a), int(b)
-            if a == b:
-                continue
-            edge = (min(a, b), max(a, b))
-            if edge in seen:
-                continue
-            seen.add(edge)
-            d = math.dist(coords[a], coords[b])
-            graph.setdefault(a, []).append((b, d))
-            graph.setdefault(b, []).append((a, d))
+    pts1 = np.array([[r[0], r[1]] for r in raw])
+    pts2 = np.array([[r[2], r[3]] for r in raw])
+    _, idx1 = tree.query(pts1)
+    _, idx2 = tree.query(pts2)
+
+    seen = set()
+    for a, b in zip(idx1, idx2):
+        a, b = int(a), int(b)
+        if a == b:
+            continue
+        if a > b:
+            a, b = b, a
+        if (a, b) in seen:
+            continue
+        seen.add((a, b))
+        d = math.dist(coords[a], coords[b])
+        graph.setdefault(a, []).append((b, d))
+        graph.setdefault(b, []).append((a, d))
+
+    return graph
+
+
+@app.post("/search/")
+async def search(
+    lat: float = Form(...),
+    long: float = Form(...),
+    cat: str = Form(...),
+    rad: float = Form(...),
+    roads: UploadFile = File(...),
+):
+    text = (await roads.read()).decode(errors="ignore")
+    graph = parse_roads(text)
 
     _, src = tree.query([lat, long])
     src = int(src)
@@ -83,6 +91,7 @@ async def search(
         visited[node] = cost
         if node in targets:
             found.append(all_ids[node])
+            targets.discard(node)
         for nbr, w in graph.get(node, []):
             if nbr not in visited:
                 heapq.heappush(heap, (cost + w, nbr))
