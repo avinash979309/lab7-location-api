@@ -1,27 +1,28 @@
-import csv, heapq, math
+import csv
+import heapq
+import math
+
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, File, Form, UploadFile
 from scipy.spatial import cKDTree
 
 app = FastAPI()
 
-pts = []
-ids = []
+all_ids = []
+all_coords = []
+all_cats = []
 
-with open("locations.csv", newline="") as f:
-    for row in csv.reader(f):
-        if len(row) < 4:
-            continue
-        try:
-            id_ = row[0].strip()
-            la, lo, ca = float(row[1]), float(row[2]), row[3].strip()
-            ids.append(id_)
-            pts.append([la, lo, ca])
-        except ValueError:
-            pass
+try:
+    with open("locations.csv") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            all_ids.append(row["ID"].strip())
+            all_coords.append([float(row["Latitude"]), float(row["Longitude"])])
+            all_cats.append(row["Category"].strip())
+except FileNotFoundError:
+    print("locations.csv not found!")
 
-coords = np.array([[p[0], p[1]] for p in pts])
-cats = [p[2] for p in pts]
+coords = np.array(all_coords)
 tree = cKDTree(coords)
 
 
@@ -31,58 +32,59 @@ async def search(
     long: float = Form(...),
     cat: str = Form(...),
     rad: float = Form(...),
-    link: UploadFile = File(...),
+    roads: UploadFile = File(...),
 ):
-    content = (await link.read()).decode(errors="ignore")
+    text = (await roads.read()).decode(errors="ignore")
 
-    # parse all valid lines first, then batch-query KD-tree
-    endpoints = []
-    for line in content.splitlines():
-        parts = line.strip().split()
+    raw = []
+    for line in text.splitlines():
+        parts = line.split()
         if len(parts) != 4:
             continue
         try:
-            endpoints.append([float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])])
+            raw.append((float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])))
         except ValueError:
             continue
 
     graph = {}
-    if endpoints:
-        ep = np.array(endpoints)
-        _, ai_all = tree.query(ep[:, :2])
-        _, bi_all = tree.query(ep[:, 2:])
+    if raw:
+        pts1 = np.array([[r[0], r[1]] for r in raw])
+        pts2 = np.array([[r[2], r[3]] for r in raw])
+        _, idx1 = tree.query(pts1)
+        _, idx2 = tree.query(pts2)
+
         seen = set()
-        for ai, bi in zip(ai_all, bi_all):
-            if ai == bi:
+        for a, b in zip(idx1, idx2):
+            a, b = int(a), int(b)
+            if a == b:
                 continue
-            key = (min(ai, bi), max(ai, bi))
-            if key in seen:
+            edge = (min(a, b), max(a, b))
+            if edge in seen:
                 continue
-            seen.add(key)
-            w = math.dist(coords[ai], coords[bi])
-            graph.setdefault(int(ai), []).append((int(bi), w))
-            graph.setdefault(int(bi), []).append((int(ai), w))
+            seen.add(edge)
+            d = math.dist(coords[a], coords[b])
+            graph.setdefault(a, []).append((b, d))
+            graph.setdefault(b, []).append((a, d))
 
-    _, snap = tree.query([lat, long])
+    _, src = tree.query([lat, long])
+    src = int(src)
 
-    candidates = set(
-        i for i in tree.query_ball_point([lat, long], rad) if cats[i] == cat
-    )
+    nearby = tree.query_ball_point([lat, long], rad)
+    targets = set(i for i in nearby if all_cats[i] == cat)
 
-    dist = {snap: 0.0}
-    heap = [(0.0, snap)]
-    result = []
+    visited = {}
+    heap = [(0.0, src)]
+    found = []
 
-    while heap and len(result) < 10:
-        d, u = heapq.heappop(heap)
-        if d > dist.get(u, float("inf")):
+    while heap and len(found) < 10:
+        cost, node = heapq.heappop(heap)
+        if node in visited:
             continue
-        if u in candidates:
-            result.append(ids[u])
-        for v, w in graph.get(u, []):
-            nd = d + w
-            if nd < dist.get(v, float("inf")):
-                dist[v] = nd
-                heapq.heappush(heap, (nd, v))
+        visited[node] = cost
+        if node in targets:
+            found.append(all_ids[node])
+        for nbr, w in graph.get(node, []):
+            if nbr not in visited:
+                heapq.heappush(heap, (cost + w, nbr))
 
-    return {"ids": result}
+    return {"ids": found}
