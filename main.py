@@ -3,14 +3,19 @@ import heapq
 import math
 
 import numpy as np
+
 from fastapi import FastAPI, File, Form, UploadFile
+
 from scipy.spatial import cKDTree
 
 app = FastAPI()
 
 all_ids = []
+
 all_coords = []
+
 all_cats = []
+
 
 try:
     with open("locations.csv") as f:
@@ -22,7 +27,9 @@ try:
 except FileNotFoundError:
     print("locations.csv not found!")
 
+
 coords = np.array(all_coords)
+
 tree = cKDTree(coords)
 
 
@@ -42,6 +49,7 @@ def parse_roads(text):
         return graph
 
     pts1 = np.array([[r[0], r[1]] for r in raw])
+    
     pts2 = np.array([[r[2], r[3]] for r in raw])
     _, idx1 = tree.query(pts1)
     _, idx2 = tree.query(pts2)
@@ -57,7 +65,9 @@ def parse_roads(text):
             continue
         seen.add((a, b))
         d = math.dist(coords[a], coords[b])
+        
         graph.setdefault(a, []).append((b, d))
+        
         graph.setdefault(b, []).append((a, d))
 
     return graph
@@ -72,16 +82,20 @@ async def search(
     link: UploadFile = File(...),
 ):
     text = (await link.read()).decode(errors="ignore")
+    
     graph = parse_roads(text)
 
     _, src = tree.query([lat, long])
     src = int(src)
 
     nearby = tree.query_ball_point([lat, long], rad)
+    
     targets = set(i for i in nearby if all_cats[i] == cat)
 
     visited = {}
+    
     heap = [(0.0, src)]
+    
     found = []
 
     while heap and len(found) < 10:
