@@ -69,9 +69,9 @@ async def search(
     long: float = Form(...),
     cat: str = Form(...),
     rad: float = Form(...),
-    roads: UploadFile = File(...),
+    link: UploadFile = File(...),
 ):
-    text = (await roads.read()).decode(errors="ignore")
+    text = (await link.read()).decode(errors="ignore")
     graph = parse_roads(text)
 
     _, src = tree.query([lat, long])
