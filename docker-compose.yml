@@ -1,7 +1,9 @@
 services:
   api:
     build: .
-    ports:
-      - "8000:8000"
+    network_mode: host
     volumes:
       - ./locations.csv:/app/locations.csv:ro
+    environment:
+      - PORT=7000
+    command: uvicorn main:app --host 0.0.0.0 --port 7000
